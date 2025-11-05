@@ -9,9 +9,6 @@ Recipients: Can register and submit urgent or scheduled blood requests.
 
 Admins: Have a full overview of the system, manage inventory, approve requests, and confirm donations.
 
-📸 Screenshots
-(It is highly recommended you add screenshots here of the main pages:)
-
 Landing Page & Urgent Needs
 
 Donor Dashboard (Profile, Map)
@@ -204,12 +201,6 @@ Bash
 http-server
 Open http://127.0.0.1:8080 in your browser.
 
-🧑‍💻 Usage (Demo Logins)
-Admin:
-
-Email: admin@bloodlink.com
-
-Password: admin123 (This is hardcoded in app.js in the handleAuth function).
 
 Donor & Recipient:
 
