@@ -5,10 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Blood Link - Online Blood Bank System</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRJF9d1rhpeQKrmJHOomiLr6Bsd7cJ1vo"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDRJF9d1rhpeQKrmJHOomiLr6Bsd7cJ1vo&libraries=marker"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script type="text/javascript"
         src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js">
+    </script>
+    <link id="favicon" rel="icon" type="image/png" href="blood icon1.png">
+    <script>
+    // Change favicon every 5 seconds
+    const favicons = [
+      "blood icon1.png",  // first icon (blood drop)
+      "blood icon2.png"   // second icon (heart + drop)
+    ];
+
+    let current = 0;
+    setInterval(() => {
+      current = (current + 1) % favicons.length;
+      const favicon = document.getElementById("favicon");
+      favicon.href = favicons[current];
+    }, 5000); // 5000ms = 5 seconds
     </script>
     <style>
         /* styles for the new news feed */

@@ -62,27 +62,34 @@ class BloodLinkApp {
         if (addBankForm) addBankForm.addEventListener('submit', (e) => { e.preventDefault(); this.handleAddBank(); });
     }
     
-    listenForAuthStateChanges() {
+   listenForAuthStateChanges() {
         this.auth.onAuthStateChanged(async (user) => {
             if (user) {
+                // User is logged in. Silently fetch their data.
                 const userDocRef = this.db.collection('users').doc(user.uid);
                 const userDoc = await userDocRef.get();
                 if (userDoc.exists) {
                     this.currentUser = { id: userDoc.id, ...userDoc.data() };
-                    await this.loadData();
-                    this.navigateToDashboard(this.currentUser.role);
                 } else {
-                    console.error("User document not found in Firestore for UID:", user.uid);
-                    this.logout();
+                    // User exists in Auth, but not Firestore. Log them out to be safe.
+                    console.error("User document not found, logging out.");
+                    this.logout(); // This will re-trigger the listener.
+                    return; // Stop execution here.
                 }
             } else {
+                // User is logged out.
                 this.currentUser = null;
-                // This is the correct flow for a logged-out user
-                this.loadData().then(() => {
-                    this.showPage('landingPage');
-                    this.renderLandingPage(); // <-- This renders the page *after* data is loaded
-                });
             }
+
+            // --- This part runs for EVERYONE (logged in or out) ---
+            // Load all the app data (banks, all users, etc.)
+            await this.loadData(); 
+            
+            // Show the landing page
+            this.showPage('landingPage'); 
+            
+            // Render the landing page content (stats, urgent needs)
+            this.renderLandingPage();
         });
     }
 
@@ -96,12 +103,32 @@ class BloodLinkApp {
         const password = formData.get('password');
 
         try {
+            let user; // Variable to hold the new user's data
             if (type === 'login') {
-                await this.auth.signInWithEmailAndPassword(email, password);
-            } else if (type === 'signup') {
-                const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
-                const user = userCredential.user;
+                // Step 1: Sign in
+                const userCredential = await this.auth.signInWithEmailAndPassword(email, password);
+                
+                // Step 2: Get the user's data from Firestore
+                const userDocRef = this.db.collection('users').doc(userCredential.user.uid);
+                const userDoc = await userDocRef.get();
+                if (!userDoc.exists) {
+                    throw new Error("User data not found in database.");
+                }
+                user = { id: userDoc.id, ...userDoc.data() };
+                
+                // Step 3: Check if the role matches
+                if (user.role !== role) {
+                    // Log them out and throw an error
+                    await this.auth.signOut();
+                    throw new Error(`You are trying to log in as a ${role}, but this account is a ${user.role}.`);
+                }
 
+            } else if (type === 'signup') {
+                // Step 1: Create auth user
+                const userCredential = await this.auth.createUserWithEmailAndPassword(email, password);
+                const authUser = userCredential.user;
+
+                // Step 2: Create the user object for Firestore
                 const newUser = {
                     name: formData.get('fullName'), email, bloodType: formData.get('bloodType'),
                     phone: formData.get('phone'), address: formData.get('address'), role,
@@ -115,9 +142,20 @@ class BloodLinkApp {
                 } else { // Recipient
                     Object.assign(newUser, { requestHistory: [], currentRequests: [] });
                 }
-                await this.db.collection('users').doc(user.uid).set(newUser);
+                
+                // Step 3: Save to Firestore
+                await this.db.collection('users').doc(authUser.uid).set(newUser);
+                
+                user = { id: authUser.uid, ...newUser }; // Set the user for navigation
             }
+
+            // --- THIS IS THE KEY ---
+            // Step 4: Manually set the currentUser and navigate
+            this.currentUser = user;
+            await this.loadData(); // Load data for the new user
             this.hideAuth();
+            this.navigateToDashboard(this.currentUser.role); // <-- EXPLICIT NAVIGATION
+
         } catch (error) {
             alert(`Error: ${error.message}`);
         }
@@ -384,49 +422,61 @@ class BloodLinkApp {
     }
 
     renderMap() {
-        const mapElement = document.getElementById('map');
-        if (!mapElement || typeof google === 'undefined') return;
+    const mapElement = document.getElementById('map');
+    if (!mapElement || typeof google === 'undefined') return;
 
-        const defaultCenter = this.bloodBanks.length > 0 ? this.bloodBanks[0].coordinates : { lat: 12.9165, lng: 79.1325 };
+    // ⬇️ *** PASTE YOUR NEW MAP ID HERE *** ⬇️
+    const mapId = "6f0cc6b7adc4b222ae28c16b"; 
 
-        const createMap = (center) => {
-            const map = new google.maps.Map(mapElement, {
-                zoom: 12,
-                center: center
+    const defaultCenter = this.bloodBanks.length > 0 ? this.bloodBanks[0].coordinates : { lat: 12.9165, lng: 79.1325 };
+
+    const createMap = (center) => {
+        const map = new google.maps.Map(mapElement, {
+            zoom: 12,
+            center: center,
+            mapId: mapId // <-- Required for Advanced Markers
+        });
+
+        // --- THIS IS THE NEW MARKER CODE ---
+        if (center !== defaultCenter) {
+            // Create a custom image element for the "Your Location" marker
+            const userMarkerImg = document.createElement('img');
+            userMarkerImg.src = "http://maps.google.com/mapfiles/ms/icons/blue-dot.png";
+            userMarkerImg.style.width = '24px';
+            userMarkerImg.style.height = '24px';
+
+            new google.maps.marker.AdvancedMarkerElement({
+                map: map,
+                position: center,
+                title: "Your Location",
+                content: userMarkerImg // Use the image element as content
             });
-
-            if (center !== defaultCenter) {
-                new google.maps.Marker({
-                    position: center,
-                    map: map,
-                    title: "Your Location",
-                    icon: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                });
-            }
-
-            this.bloodBanks.forEach(bank => {
-                new google.maps.Marker({
-                    position: bank.coordinates,
-                    map: map,
-                    title: `${bank.name}\n${bank.address}`
-                });
-            });
-        };
-
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    const userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
-                    createMap(userLocation);
-                },
-                () => {
-                    createMap(defaultCenter);
-                }
-            );
-        } else {
-            createMap(defaultCenter);
         }
+
+        this.bloodBanks.forEach(bank => {
+            new google.maps.marker.AdvancedMarkerElement({
+                map: map,
+                position: bank.coordinates,
+                title: `${bank.name}\n${bank.address}`
+            });
+        });
+        // --- END OF NEW MARKER CODE ---
+    };
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                createMap(userLocation);
+            },
+            () => {
+                createMap(defaultCenter);
+            }
+        );
+    } else {
+        createMap(defaultCenter);
     }
+}
 
     renderDonorProfile() {
         document.getElementById('donorProfile').innerHTML = `
@@ -723,48 +773,60 @@ class BloodLinkApp {
 
     // --- 🌟 NEW FUNCTION FOR RECIPIENT MAP 🌟 ---
     renderRecipientMap() {
-        const mapElement = document.getElementById('recipientMap'); // <-- Use new ID
-        if (!mapElement || typeof google === 'undefined') return;
+    const mapElement = document.getElementById('recipientMap');
+    if (!mapElement || typeof google === 'undefined') return;
 
-        const defaultCenter = this.bloodBanks.length > 0 ? this.bloodBanks[0].coordinates : { lat: 12.9165, lng: 79.1325 };
+    // ⬇️ *** PASTE YOUR NEW MAP ID HERE *** ⬇️
+    const mapId = "6f0cc6b7adc4b222ae28c16b"; // <-- Must be the same ID as above
 
-        const createMap = (center) => {
-            const map = new google.maps.Map(mapElement, {
-                zoom: 12,
-                center: center
+    const defaultCenter = this.bloodBanks.length > 0 ? this.bloodBanks[0].coordinates : { lat: 12.9165, lng: 79.1325 };
+
+    const createMap = (center) => {
+        const map = new google.maps.Map(mapElement, {
+            zoom: 12,
+            center: center,
+            mapId: mapId // <-- Required for Advanced Markers
+        });
+
+        // --- THIS IS THE NEW MARKER CODE ---
+        if (center !== defaultCenter) {
+            // Create a custom image element for the "Your Location" marker
+            const userMarkerImg = document.createElement('img');
+            userMarkerImg.src = "http://maps.google.com/mapfiles/ms/icons/blue-dot.png";
+            userMarkerImg.style.width = '24px';
+            userMarkerImg.style.height = '24px';
+
+            new google.maps.marker.AdvancedMarkerElement({
+                map: map,
+                position: center,
+                title: "Your Location",
+                content: userMarkerImg // Use the image element as content
             });
-
-            if (center !== defaultCenter) {
-                new google.maps.Marker({
-                    position: center,
-                    map: map,
-                    title: "Your Location",
-                    icon: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                });
-            }
-
-            this.bloodBanks.forEach(bank => {
-                new google.maps.Marker({
-                    position: bank.coordinates,
-                    map: map,
-                    title: `${bank.name}\n${bank.address}`
-                });
-            });
-        };
-
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                (position) => {
-                    const userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
-                    createMap(userLocation);
-                },
-                () => {
-                    createMap(defaultCenter);
-                }
-            );
-        } else {
-            createMap(defaultCenter);
         }
+
+        this.bloodBanks.forEach(bank => {
+            new google.maps.marker.AdvancedMarkerElement({
+                map: map,
+                position: bank.coordinates,
+                title: `${bank.name}\n${bank.address}`
+            });
+        });
+        // --- END OF NEW MARKER CODE ---
+    };
+
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                createMap(userLocation);
+            },
+            () => {
+                createMap(defaultCenter);
+            }
+        );
+    } else {
+        createMap(defaultCenter);
+    }
     }
     // --- 🌟 END OF NEW FUNCTION 🌟 ---
 
@@ -990,7 +1052,7 @@ class BloodLinkApp {
             await this.db.collection('bloodBanks').add(newBank);
             alert(`${name} has been successfully added!`);
             form.reset();
-            this.hideAddBankModal();
+            hideAddBankModal();
             this.renderAdminDashboard(); 
         } catch(error) {
             console.error("Error adding new blood bank to Firestore: ", error);

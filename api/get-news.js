@@ -2,7 +2,7 @@
 export default async function handler(request, response) {
   // Get the secret key from Vercel Environment Variables
   const apiKey = process.env.NEWSAPI_KEY;
-  const url = `https://newsapi.org/v2/top-headlines?country=in&category=health&q=blooddonation&apiKey=${apiKey}`;
+  const url = `https://newsapi.org/v2/everything?q=("blood donation" OR "blood drive" OR "donate blood")&language=en&sortBy=publishedAt&apiKey=${apiKey}`;
 
   try {
     const newsResponse = await fetch(url);
